@@ -1,0 +1,15 @@
+[submodule "vcpkg"]
+	path = vcpkg
+	url = https://github.com/microsoft/vcpkg.git
+[submodule "stats"]
+	path = stats
+	url = https://github.com/kthohr/stats.git
+[submodule "gcem"]
+	path = gcem
+	url = https://github.com/kthohr/gcem.git
+[submodule "eigen"]
+	path = eigen
+	url = https://gitlab.com/libeigen/eigen.git
+[submodule "mcmc"]
+	path = mcmc
+	url = https://github.com/kthohr/mcmc
