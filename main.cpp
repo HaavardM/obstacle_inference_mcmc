@@ -74,6 +74,7 @@ double log_likelihood(const arma::vec &p, void *ll_data) {
     auto &[theta, intention] = data;
 
     auto probs = arma::mat(3, theta.n_rows);
+    #pragma omp parallel for
     for (int i = 0; i < theta.n_rows; ++i) {
         probs.col(i) = map_probs(theta[i], c, a);
     }
@@ -113,17 +114,6 @@ int run() {
 
 int main(int argc, char** argv) {
 
-    #pragma omp parallel default(none)
-    #pragma omp single
-    {
-        #pragma omp task
-        run();
-        #pragma omp task
-        run();
-        #pragma omp task
-        run();
-        #pragma omp task
-        run();
-    }
+    run();
     return 0;
 }
