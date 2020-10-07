@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"C_Cpp.clang_format_fallbackStyle": "{BasedOnStyle: Google, IndentWidth: 4}",
+		"files.associations": {
+			"armadillo": "cpp",
+			"*.ipp": "cpp"
+		}
+	}
+}
