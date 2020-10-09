@@ -10,6 +10,8 @@
 #include "stats.hpp"
 #include <omp.h>
 #include "matplotlibcpp.h"
+#include <algorithm>
+
 
 constexpr auto P = 4;
 constexpr auto N_chains = 10;
@@ -17,6 +19,7 @@ constexpr auto N_chains = 10;
 constexpr double PI = 3.14;
 
 constexpr double THETA = PI / 4;
+constexpr double RW_SCALING = 1.0 / 50.0;
 
 
 std::tuple<arma::vec, arma::Col<int>> load_csv() {
@@ -27,7 +30,7 @@ std::tuple<arma::vec, arma::Col<int>> load_csv() {
     for (csv::CSVRow &row : reader) {
         theta_vec.push_back(row[0].get<double>());
         intention_vec.push_back(row[1].get<int>());
-        if (++i >= 1000) {
+        if (++i >= 100) {
             break;
         }
     }
@@ -68,8 +71,9 @@ double lgamma(double x, double shape, double scale) {
 }
 
 double log_likelihood(const arma::vec &p, void *ll_data) {
-    auto c = std::exp(p[0]);
-    auto a = softmax(p.rows(1,3));
+
+    auto c = std::exp(p[0] * RW_SCALING);
+    auto a = softmax(p.rows(1,3) * RW_SCALING);
 
     auto &[theta, intention] = data;
 
@@ -79,15 +83,15 @@ double log_likelihood(const arma::vec &p, void *ll_data) {
         probs.col(i) = map_probs(theta[i], c, a);
     }
     arma::mat lprobs = arma::log(probs);
-    auto lp_c = lgamma(c*8, 7.5, 1.0);
-    auto lp_a = ldirchilet(a, {1, 0.3, 0.1});
+    auto lp_c = lgamma(c*10, 7.5, 1.0);
+    auto lp_a = ldirchilet(a, {20, 4, 2.5});
     auto ll_intention = 0.0;
-    #pragma omp parallel for reduction(+:ll_intention)
+    #pragma omp parallel for simd reduction(+:ll_intention)
     for (int i = 0; i < intention.n_rows; ++i) {
         ll_intention += lprobs.col(i)[intention[i]];
     }
     static int i = 0;
-    auto ll = lp_c + lp_a + ll_intention;// / intention.n_rows;
+    auto ll = lp_c + lp_a;// + ll_intention;// / static_cast<double>(intention.size());// / intention.n_rows;
     if (++i % 10000 == 0) {
         std::cout << i << ": " << ll << std::endl;
         printf("* c:     %.4f - %.4f\n", c, lp_c);
@@ -100,39 +104,57 @@ double log_likelihood(const arma::vec &p, void *ll_data) {
 }
 
 std::tuple<arma::vec, arma::mat> run(mcmc::algo_settings_t settings) {
-    arma::vec4 initial = {1.0, 0.34, 0.33, 0.33};
+    arma::vec4 initial(arma::fill::randu);
+    initial.row(0) *= 2;
     arma::mat draws;
     std::cout << "Starting MCMC - Chain Number " << omp_get_thread_num() << std::endl;
     mcmc::rwmh(initial, draws, log_likelihood, nullptr, settings);
     std::cout << "MCMC Done - Chain Number " << omp_get_thread_num() << std::endl;
-    arma::vec c = arma::exp(draws.col(0));
-    arma::mat a = softmax(draws.cols(1, 3).t());
+    arma::vec c = arma::exp(draws.col(0)*RW_SCALING);
+    arma::mat a = softmax(draws.cols(1, 3).t()*RW_SCALING);
     std::cout << "c: " << arma::mean(c) << std::endl;
     std::cout << "a: " << arma::mean(a, 1) << std::endl;
+    std::cout << "Accept: " << settings.rwmh_accept_rate << std::endl;
     return {c, a};
 }
 
 namespace plt = matplotlibcpp;
 int main(int argc, char** argv) {
     mcmc::algo_settings_t settings;
-    settings.rwmh_n_draws = 5e5;
+    settings.rwmh_n_draws = 3e5;
     auto [c, a] = run(settings);
-    auto c_raw = arma::conv_to<std::vector<double>>::from(c);
-    auto a0_raw = arma::conv_to<std::vector<double>>::from(a.row(0));
-    auto a1_raw = arma::conv_to<std::vector<double>>::from(a.row(1));
-    auto a2_raw = arma::conv_to<std::vector<double>>::from(a.row(2));
+    auto res_c = arma::conv_to<std::vector<double>>::from(c);
+    auto res_a0 = arma::conv_to<std::vector<double>>::from(a.row(0));
+    auto res_a1 = arma::conv_to<std::vector<double>>::from(a.row(1));
+    auto res_a2 = arma::conv_to<std::vector<double>>::from(a.row(2));
+    std::cout << res_c.size() << std::endl;
+
+
+    std::vector<double> x, pc, pa0, pa1, pa2;
+    auto N = 1000;
+    for (double i = 0.0; i <= 1.0; i += 1.0 / N) {
+        x.push_back(i);
+        pc.push_back(std::exp(lgamma(i*10, 7.5, 1.0))*static_cast<double>(settings.rwmh_n_draws) / 2.5);
+    }
+
+
     plt::subplot(2, 2, 1);
-    plt::hist(c_raw, 50);
+    plt::plot(x, pc, "r");
+    plt::xlim(0.0, 1.0);
     plt::title("C");
     plt::subplot(2, 2, 2);
-    plt::hist(a0_raw, 50);
+    plt::hist(res_a0, 50);
+    plt::xlim(0.0, 1.0);
     plt::title("A0");
     plt::subplot(2, 2, 3);
-    plt::hist(a1_raw, 50);
+    plt::hist(res_a1, 50);
+    plt::xlim(0.0, 1.0);
     plt::title("A1");
     plt::subplot(2, 2, 4);
-    plt::hist(a2_raw, 50);
+    plt::hist(res_a2, 50);
+    plt::xlim(0.0, 1.0);
     plt::title("A2");
+    plt::tight_layout();
     plt::save("./c.png");
     return 0;
 }
