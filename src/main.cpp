@@ -9,7 +9,8 @@
 #include <omp.h>
 #include "matplotlibcpp.h"
 
-#define EIGEN_USE_BLAS
+#define EIGEN_USE_MKL_ALL
+#define MKL_DIRECT_CALL
 #include "Eigen/Dense"
 #include "unsupported/Eigen/SpecialFunctions"
 #include <algorithm>
@@ -24,7 +25,7 @@ constexpr double THETA = PI / 4;
 constexpr double RW_SCALING = 1.0 / 50.0;
 
 
-std::tuple<Eigen::Vector<double, N>, Eigen::Vector<int, N>> load_csv() {
+std::tuple<std::vector<double>, std::vector<int>> load_csv() {
     std::vector<double> theta_vec;
     std::vector<int> intention_vec;
     csv::CSVReader reader("data.csv");
@@ -36,31 +37,26 @@ std::tuple<Eigen::Vector<double, N>, Eigen::Vector<int, N>> load_csv() {
             break;
         }
     }
-    Eigen::Vector<double, N> theta;
-    Eigen::Vector<int, N> intention;
-
-    for (int i = 0; i < theta_vec.size(); ++i) {
-        theta(i) = theta_vec[i];
-        intention(i) = intention_vec[i];
-    }
-    return std::tuple(theta, intention);
+    
+    return std::tuple(theta_vec, intention_vec);
 }
 
 auto data = load_csv();
 
-template<typename D>
-void apply_softmax(Eigen::MatrixBase<D>& p) {
-    auto exp = p.array().exp();
+template<typename Derived>
+void apply_softmax(Eigen::MatrixBase<Derived>& p) {
+    auto exp = p.template array().exp();
     p = exp.array().rowwise() / exp.array().colwise().sum();
 }
 
-double intention_probs(double theta, double c, const Eigen::Vector3d& alpha, int intention) {
+template<typename Derived>
+double intention_probs(double theta, double c, const Eigen::MatrixBase<Derived>& alpha, int intention) {
     if (theta <= 0.0) {
-        return (Eigen::Matrix<double, 3, 3, Eigen::RowMajor>({{(std::exp(-c * std::abs(theta))), 1.0 / 2.0, 0.0},
+        return (Eigen::Matrix3d({{(std::exp(-c * std::abs(theta))), 1.0 / 2.0, 0.0},
                            {(1 - std::exp(c * theta)), 1.0 / 2.0, 0.0},
                            {(0.0), 0.0, 1.0}}).row(intention) * alpha);
     } else {
-        return (Eigen::Matrix<double, 3, 3, Eigen::RowMajor>({{(std::exp(-c * std::abs(theta))), 1.0 / 2.0, 0.0},
+        return (Eigen::Matrix3d({{(std::exp(-c * std::abs(theta))), 1.0 / 2.0, 0.0},
                            {(0.0), 0.0, 1.0},
                            {(1 - std::exp(-c * theta)), 1.0 / 2.0, 0.0}}).row(intention) * alpha);
     }
@@ -85,12 +81,12 @@ double log_prior(const Eigen::Vector4<double> p) {
 double log_likelihood(const Eigen::Vector4<double> p) {
     auto &[theta, intention] = data;
 
+    auto c = p(0);
+    auto a = p.tail<3>();
     auto ll_intention = 0.0;
     #pragma omp parallel for simd reduction(+:ll_intention)
     for (int i = 0; i < intention.size(); ++i) {
-        auto c = p(0);
-        auto a = p.tail<3>();
-        ll_intention += std::log(intention_probs(theta(i), p(0), a, intention(i)));
+        ll_intention += std::log(intention_probs(theta[i], c, a, intention[i]));
     }
 
     return ll_intention;
@@ -146,5 +142,31 @@ int main(int argc, char** argv) {
     mcmc::algo_settings_t settings;
     settings.rwmh_n_draws = 3e5;
     auto [c, a] = run(settings);
+    Eigen::VectorXd a0 = a.row(0);
+    Eigen::VectorXd a1 = a.row(1);
+    Eigen::VectorXd a2 = a.row(2);
+    std::vector<double> c_vec(c.data(), c.data() + c.rows()*c.cols());
+    std::vector<double> a0_vec(a0.data(), a0.data() + a0.rows()*a0.cols());
+    std::vector<double> a1_vec(a1.data(), a1.data() + a1.rows()*a1.cols());
+    std::vector<double> a2_vec(a2.data(), a2.data() + a2.rows()*a2.cols());
+
+
+    plt::subplot(2,2,1);
+    plt::hist(c_vec, 50);
+    plt::title("C");
+    plt::subplot(2,2,2);
+    plt::hist(a0_vec, 50);
+    plt::title("A_0");
+    plt::subplot(2,2,3);
+    plt::hist(a1_vec, 50);
+    plt::title("A_1");
+    plt::subplot(2,2,4);
+    plt::hist(a2_vec, 50);
+    plt::title("A_2");
+    plt::tight_layout();
+    plt::save("params.png");
+    //plt::show();
+
+
     return 0;
 }
